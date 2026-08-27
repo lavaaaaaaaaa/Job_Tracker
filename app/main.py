@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from models import Job
 from database import get_connection
 
@@ -48,36 +48,105 @@ def create_job(job: Job):
     }
 
 @app.get("/jobs")
-def get_jobs():
+def get_jobs(
+    status: str | None = None,
+    work_mode: str |None = None
+):
     connection = get_connection()
     cursor = connection.cursor()
+ 
+    if status and work_mode:
+        cursor.execute("""
+            SELECT id, company, role, status, work_mode, job_url, location, salary
+            FROM jobs
+            WHERE LOWER(status) = LOWER(%s) 
+            AND LOWER(work_mode) = LOWER(%s);
+            """,
+            (status, work_mode)
+        )
 
-    cursor.execute(
-        """
-        SELECT id, company, role, status, location, work_mode, job_url, salary
-        FROM jobs;
-        """
-    )
+    elif status:
+        cursor.execute("""
+            SELECT id, company, role, status, work_mode, job_url, location, salary
+            FROM jobs
+            WHERE LOWER(status) = LOWER(%s);
+            """,
+            (status,)
+        )
+
+    elif work_mode:
+        cursor.execute("""
+            SELECT id, company, role, status, work_mode, job_url, location, salary
+            FROM jobs
+            WHERE LOWER(work_mode) = LOWER(%s);
+            """,
+            (work_mode,)
+        )
+
+    else:
+        cursor.execute("""
+            SELECT id, company, role, status, work_mode, job_url, location, salary
+            FROM jobs;
+            """
+        )
 
     jobs = cursor.fetchall()
 
     cursor.close()
     connection.close()
 
-    return[
+    return [
         {
-            "id":job[0],
-            "company":job[1],
-            "role":job[2],
-            "status":job[3],
-            "work_mode":job[4],
-            "job_url":job[5],
-            "location":job[6],
-            "salary":job[7],
-            
+            "id": job[0],
+            "company": job[1],
+            "role": job[2],
+            "status": job[3],
+            "work_mode": job[4],
+            "job_url": job[5],
+            "location": job[6],
+            "salary": job[7],           
         }
-        for job in jobs      
+        for job in jobs
     ]
+
+@app.get("/jobs/{job_id}")
+def get_job(job_id: int):
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+        SELECT id, company, role, status, location, work_mode, job_url, salary
+        FROM jobs
+        WHERE id = %s;
+        """,
+        (job_id,)
+    )
+
+    job = cursor.fetchone()
+
+    cursor.close()
+    connection.close()
+
+    if job is None:
+        raise HTTPException(
+            status_code = 404,
+            detail = "Job not found"
+        )
+
+
+    return{
+        "id":job[0],
+        "company":job[1],
+        "role":job[2],
+        "status":job[3],
+        "work_mode":job[4],
+        "job_url":job[5],
+        "location":job[6],
+        "salary":job[7],
+            
+    }
+
 
 @app.put("/jobs/{job_id}")
 def update_job(job_id: int, job: Job):
