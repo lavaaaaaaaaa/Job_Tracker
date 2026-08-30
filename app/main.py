@@ -1,9 +1,12 @@
 from fastapi import FastAPI, HTTPException
 from models import Job
 from database import get_connection
+from argon2 import PasswordHasher
+from models import UserCreate, UserLogin
 
 
 app = FastAPI() #create my application
+ph = PasswordHasher()
 
 @app.get("/") #Whe somebody sends a GET request to /, use function below
 def home(): #is the function that runs
@@ -14,6 +17,70 @@ def home(): #is the function that runs
 @app.get("/about")
 def about():
     return {"message": "Personal job application tracker"}
+
+@app.post("/register")
+def register(user: UserCreate):
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    password_hash = ph.hash(user.password)
+
+    cursor.execute(
+        """
+        INSERT INTO users(email, password_hash)
+        VALUES (%s, %s)
+        RETURNING id, email;
+        """,
+        (user.email, password_hash)
+    )
+
+    new_user = cursor.fetchone()
+    connection.commit()
+    cursor.close()
+    connection.close()
+    return{
+        "id": new_user[0],
+        "email": new_user[1]
+    }
+
+@app.post("/login")
+def login(user: UserLogin):
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+        SELECT id, email, password_hash
+        FROM users
+        WHERE email = %s;
+        """,
+        (user.email,)
+    )
+
+    db_user = cursor.fetchone()
+    cursor.close()
+    connection.close()
+
+    if db_user is None:
+        raise HTTPException(
+            status_code=401,
+            detail = "Invalid rmail or password"
+        )
+
+    try:
+        ph.verify(db_user[2], user.password)
+
+    except:
+        raise HTTPException(
+            status_code=401,
+            detail = "Invalid email or password"
+        )
+
+    return {
+        "message": "Login successful",
+        "user_id": db_user[0],
+        "email": db_user[1]
+    }
 
 @app.post("/jobs")
 def create_job(job: Job):

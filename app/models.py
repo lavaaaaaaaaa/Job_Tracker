@@ -18,4 +18,12 @@ class Job(BaseModel):
     job_url: str | None = None
     salary: str | None = None
 
+class UserCreate(BaseModel):
+    email: str
+    password: str
+
+class UserLogin(BaseModel):
+    email: str
+    password: str
+
     
