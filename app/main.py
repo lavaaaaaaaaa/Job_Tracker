@@ -1,12 +1,60 @@
-from fastapi import FastAPI, HTTPException
-from models import Job
-from database import get_connection
-from argon2 import PasswordHasher
-from models import UserCreate, UserLogin
+import os
+import jwt
 
+from datetime import datetime, timedelta, timezone
+from dotenv import load_dotenv
+
+from fastapi import FastAPI, HTTPException, Depends
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from models import Job, UserCreate, UserLogin, Token
+from database import get_connection
+from pwdlib import PasswordHash
+# from argon2 import PasswordHasher
+
+load_dotenv()
+SECRET_KEY = os.getenv("JWT_SECRET_KEY")
+ALGORITHM = "HS256"
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 app = FastAPI() #create my application
-ph = PasswordHasher()
+ph = PasswordHash.recommended()
+
+def create_access_token(user_id: int):
+    expire = datetime.now(timezone.utc) + timedelta(minutes=30)
+    payload = {
+        "sub": str(user_id),
+        "exp": expire
+    }
+    token = jwt.encode(
+        payload,
+        SECRET_KEY,
+        algorithm=ALGORITHM
+    )
+    return token
+
+def get_current_user(token: str = Depends(oauth2_scheme)):
+    try:
+        payload = jwt.decode(
+            token,
+            SECRET_KEY,
+            algorithms=[ALGORITHM]
+        )
+
+        user_id = payload.get("sub")
+
+        if user_id is None:
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid token"
+            )
+
+        return int(user_id)
+
+    except jwt.InvalidTokenError:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid token"
+        )
 
 @app.get("/") #Whe somebody sends a GET request to /, use function below
 def home(): #is the function that runs
@@ -27,11 +75,11 @@ def register(user: UserCreate):
 
     cursor.execute(
         """
-        INSERT INTO users(email, password_hash)
-        VALUES (%s, %s)
-        RETURNING id, email;
+        INSERT INTO users(username, email, password_hash)
+        VALUES (%s, %s, %s)
+        RETURNING id, username, email;
         """,
-        (user.email, password_hash)
+        (user.username, user.email, password_hash)
     )
 
     new_user = cursor.fetchone()
@@ -40,21 +88,53 @@ def register(user: UserCreate):
     connection.close()
     return{
         "id": new_user[0],
-        "email": new_user[1]
+        "username": new_user[1],
+        "email": new_user[2]
     }
 
-@app.post("/login")
-def login(user: UserLogin):
+@app.get("/users/me")
+def get_me(user_id: int = Depends(get_current_user)):
     connection = get_connection()
     cursor = connection.cursor()
 
     cursor.execute(
         """
-        SELECT id, email, password_hash
+        SELECT id, username, email
         FROM users
-        WHERE email = %s;
+        WHERE id = %s;
         """,
-        (user.email,)
+        (user_id,)
+    )
+
+    user = cursor.fetchone()
+
+    cursor.close()
+    connection.close()
+
+    if user is None:
+        raise HTTPException(
+            status_code=404,
+            detail="User not found"
+        )
+
+    return {
+        "id": user[0],
+        "username": user[1],
+        "email": user[2]
+    }
+
+@app.post("/token", response_model = Token)
+def login(form_data: OAuth2PasswordRequestForm = Depends()):
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+        SELECT id, username, email, password_hash
+        FROM users
+        WHERE username = %s;
+        """,
+        (form_data.username,)
     )
 
     db_user = cursor.fetchone()
@@ -64,23 +144,27 @@ def login(user: UserLogin):
     if db_user is None:
         raise HTTPException(
             status_code=401,
-            detail = "Invalid rmail or password"
+            detail = "Invalid email or password"
         )
 
     try:
-        ph.verify(db_user[2], user.password)
+        ph.verify(form_data.password, db_user[3])
 
     except:
         raise HTTPException(
             status_code=401,
             detail = "Invalid email or password"
         )
-
+    access_token = create_access_token(db_user[0])
     return {
-        "message": "Login successful",
-        "user_id": db_user[0],
-        "email": db_user[1]
+        "access_token": access_token,
+        "token_type": "bearer"
     }
+    # return {
+    #     "message": "Login successful",
+    #     "user_id": db_user[0],
+    #     "email": db_user[1]
+    # }
 
 @app.post("/jobs")
 def create_job(job: Job):
