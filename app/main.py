@@ -167,17 +167,19 @@ def login(form_data: OAuth2PasswordRequestForm = Depends()):
     # }
 
 @app.post("/jobs")
-def create_job(job: Job):
+def create_job(
+    job: Job,
+    user_id: int = Depends(get_current_user)):
     connection = get_connection()
     cursor = connection.cursor()
 
     cursor.execute(
         """
-        INSERT INTO jobs(company, role, status, location, work_mode,job_url, salary)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        INSERT INTO jobs(company, role, status, location, work_mode,job_url, salary, user_id)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING id;
         """,
-        (job.company, job.role, job.status, job.location, job.work_mode, job.job_url, job.salary)
+        (job.company, job.role, job.status, job.location, job.work_mode, job.job_url, job.salary, user_id)
     )
 
     job_id = cursor.fetchone()[0]
@@ -201,7 +203,8 @@ def create_job(job: Job):
 @app.get("/jobs")
 def get_jobs(
     status: str | None = None,
-    work_mode: str |None = None
+    work_mode: str |None = None,
+    user_id: int = Depends(get_current_user)
 ):
     connection = get_connection()
     cursor = connection.cursor()
@@ -210,35 +213,40 @@ def get_jobs(
         cursor.execute("""
             SELECT id, company, role, status, work_mode, job_url, location, salary
             FROM jobs
-            WHERE LOWER(status) = LOWER(%s) 
+            WHERE user_id = %s
+            AND LOWER(status) = LOWER(%s) 
             AND LOWER(work_mode) = LOWER(%s);
             """,
-            (status, work_mode)
+            (user_id, status, work_mode)
         )
 
     elif status:
         cursor.execute("""
             SELECT id, company, role, status, work_mode, job_url, location, salary
             FROM jobs
-            WHERE LOWER(status) = LOWER(%s);
+            WHERE user_id = %s
+            AND LOWER(status) = LOWER(%s);
             """,
-            (status,)
+            (user_id, status,)
         )
 
     elif work_mode:
         cursor.execute("""
             SELECT id, company, role, status, work_mode, job_url, location, salary
             FROM jobs
-            WHERE LOWER(work_mode) = LOWER(%s);
+            WHERE user_id = %s
+            AND LOWER(work_mode) = LOWER(%s);
             """,
-            (work_mode,)
+            (user_id, work_mode,)
         )
 
     else:
         cursor.execute("""
             SELECT id, company, role, status, work_mode, job_url, location, salary
-            FROM jobs;
-            """
+            FROM jobs
+            WHERE user_id = %s;
+            """,
+            (user_id,)
         )
 
     jobs = cursor.fetchall()
@@ -261,7 +269,8 @@ def get_jobs(
     ]
 
 @app.get("/jobs/{job_id}")
-def get_job(job_id: int):
+def get_job(job_id: int,
+    user_id: int = Depends(get_current_user)):
     connection = get_connection()
     cursor = connection.cursor()
 
@@ -269,9 +278,10 @@ def get_job(job_id: int):
         """
         SELECT id, company, role, status, location, work_mode, job_url, salary
         FROM jobs
-        WHERE id = %s;
+        WHERE id = %s
+        AND user_id = %s;
         """,
-        (job_id,)
+        (job_id, user_id)
     )
 
     job = cursor.fetchone()
@@ -300,7 +310,7 @@ def get_job(job_id: int):
 
 
 @app.put("/jobs/{job_id}")
-def update_job(job_id: int, job: Job):
+def update_job(job_id: int, job: Job, user_id: int = Depends(get_current_user)):
     connection = get_connection()
     cursor = connection.cursor()
 
@@ -315,9 +325,10 @@ def update_job(job_id: int, job: Job):
             location = %s,
             salary = %s
         WHERE id = %s
+        AND user_id = %s
         RETURNING id, company, role, status, work_mode, job_url, location, salary;
         """,
-        (job.company, job.role, job.status, job.work_mode, job.job_url, job.location, job.salary, job_id)
+        (job.company, job.role, job.status, job.work_mode, job.job_url, job.location, job.salary, job_id, user_id)
     )
 
     updated_job = cursor.fetchone()
@@ -343,7 +354,7 @@ def update_job(job_id: int, job: Job):
     }
 
 @app.delete("/jobs/{job_id}")
-def delete_job(job_id: int):
+def delete_job(job_id: int, user_id: int = Depends(get_current_user)):
     connection = get_connection()
     cursor = connection.cursor()
 
@@ -351,9 +362,10 @@ def delete_job(job_id: int):
         """
         DELETE FROM jobs
         WHERE id = %s
+        AND user_id = %s
         RETURNING id;
         """,
-        (job_id,)
+        (job_id, user_id)
     )
 
     deleted_job = cursor.fetchone()
